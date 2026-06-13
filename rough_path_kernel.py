@@ -48,8 +48,7 @@ def rough_path_score(returns, macro_df, depth=4, bandwidth=1.0, alpha=0.1):
     min_len = min(len(returns), len(macro_df))
     returns = returns[:min_len]
     macro_df = macro_df.iloc[:min_len]
-    # Compute signatures for each time step (rolling window of length depth+1? We need a moving window)
-    # Actually signature is defined on the whole path, not per step. We'll use a rolling window of size 5 to get local signatures.
+    # Use rolling window for local signatures
     window = 5
     if len(returns) < window + 1:
         return 0.0
@@ -61,25 +60,32 @@ def rough_path_score(returns, macro_df, depth=4, bandwidth=1.0, alpha=0.1):
         sig = signature(segment, depth)
         sigs.append(sig)
         targets.append(returns[i+window])
-        # Use macro at the end of the window as conditioning
         macros_aligned.append(macro_df.iloc[i+window].values)
     if len(sigs) < 5:
         return 0.0
     sigs = np.array(sigs)
     targets = np.array(targets)
     macros = np.array(macros_aligned)
+    # Remove any rows with NaN
+    mask = ~(np.isnan(sigs).any(axis=1) | np.isnan(macros).any(axis=1) | np.isnan(targets))
+    sigs = sigs[mask]
+    macros = macros[mask]
+    targets = targets[mask]
+    if len(sigs) < 5:
+        return 0.0
     # Standardise macro
     scaler = StandardScaler()
     macros_scaled = scaler.fit_transform(macros)
-    # Combine signature and macro as features? Kernel ridge expects a kernel on features.
-    # We'll create a joint kernel: K_total = K_sig * K_macro (product of Gaussian kernels)
+    # Compute kernel matrices
     K_sig = kernel_matrix(sigs, bandwidth)
     K_macro = kernel_matrix(macros_scaled, bandwidth)
     K = K_sig * K_macro
+    # Ensure no NaN in K
+    K = np.nan_to_num(K, nan=0.0)
     # Train kernel ridge
     kr = KernelRidge(alpha=alpha, kernel='precomputed')
     kr.fit(K, targets)
-    # Predict for the last window (use last segment)
+    # Predict for the last window
     last_segment = returns[-window:]
     last_sig = signature(last_segment, depth).reshape(1, -1)
     last_macro = macro_df.iloc[-1].values.reshape(1, -1)
@@ -90,5 +96,6 @@ def rough_path_score(returns, macro_df, depth=4, bandwidth=1.0, alpha=0.1):
         diff_sig = last_sig[0] - sigs[i]
         diff_macro = last_macro_scaled[0] - macros_scaled[i]
         k_last[i] = np.exp(-np.dot(diff_sig, diff_sig) / (2*bandwidth**2)) * np.exp(-np.dot(diff_macro, diff_macro) / (2*bandwidth**2))
+    k_last = np.nan_to_num(k_last, nan=0.0)
     pred = kr.predict(k_last.reshape(1, -1))[0]
     return float(pred)
