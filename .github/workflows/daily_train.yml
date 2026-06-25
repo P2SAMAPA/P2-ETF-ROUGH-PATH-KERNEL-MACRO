@@ -2,7 +2,7 @@ name: Daily Rough Path Training
 
 on:
   schedule:
-    - cron: '30 03 * * *'
+    - cron: '30 01 * * *'
   workflow_dispatch:
 
 jobs:
